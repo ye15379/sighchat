@@ -1,0 +1,15 @@
+
+# deps
+node_modules/
+# build
+.next/
+# env
+.env
+.env.*
+# misc
+.DS_Store
+
+# ignore build + deps
+frontend/.next/
+frontend/node_modules/
+frontend/.env.local

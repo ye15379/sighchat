@@ -3,9 +3,10 @@
 node_modules/
 # build
 .next/
-# env
+# env — block real env files, but track example/template files
 .env
 .env.*
+!.env.example
 # misc
 .DS_Store
 

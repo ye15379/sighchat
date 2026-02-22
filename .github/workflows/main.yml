@@ -17,6 +17,8 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build (docker compose)
+        env:
+          TURN_EXTERNAL_IP: "127.0.0.1"
         run: docker compose build
       - name: Run stack (docker compose up)
         run: docker compose up -d

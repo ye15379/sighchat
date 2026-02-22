@@ -18,3 +18,20 @@ jobs:
 
       - name: Build (docker compose)
         run: docker compose build
+      - name: Run stack (docker compose up)
+        run: docker compose up -d
+
+      - name: Healthcheck (backend)
+        run: |
+          for i in {1..30}; do
+            curl -fsS http://localhost:8000/health/ && exit 0
+            sleep 2
+          done
+          echo "Healthcheck failed"
+          docker compose ps
+          docker compose logs --no-color --tail=200
+          exit 1
+
+      - name: Tear down (docker compose down)
+        if: always()
+        run: docker compose down -v --remove-orphans

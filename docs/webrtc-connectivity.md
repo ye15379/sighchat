@@ -27,7 +27,8 @@ A WebRTC call requires **three** services reachable by **both** peers:
 
 ## 2. Coturn Reference
 
-`docker-compose.yml` runs **coturn 4.6** as the `turn` service.
+`docker-compose.yml` defines **coturn 4.6** as the `turn` service under the
+`webrtc` profile — it does **not** start by default.
 
 ### `TURN_EXTERNAL_IP` (required env var)
 
@@ -303,7 +304,64 @@ Invalid/empty → fallback to Google STUN + Twilio STUN.
 
 ---
 
-## 9. Dev Commands
+## 9. Local Dev — Docker Compose Commands
+
+The `turn` service is behind a compose **profile** (`webrtc`).
+It does **not** start with the default `docker compose up`.
+
+### Routine dev (no TURN needed)
+
+```bash
+docker compose up -d --build          # starts postgres, redis, backend, backend_tls
+```
+
+No `TURN_EXTERNAL_IP` required. STUN-only WebRTC still works on the same LAN.
+
+### Cross-network dev (TURN required)
+
+```bash
+# 1. Auto-generate .env (TURN_EXTERNAL_IP) + frontend/.env.local (ICE servers)
+./scripts/dev-env.sh
+
+# 2. Start coturn alongside the rest
+docker compose --profile webrtc up -d --build
+
+# Or start turn alone (backend already running):
+docker compose --profile webrtc up -d turn
+```
+
+`scripts/dev-env.sh` picks the best IP automatically:
+
+| Priority | Source | Example |
+|----------|--------|---------|
+| 1 | `tailscale ip -4` | `100.64.0.7` |
+| 2 | `ipconfig getifaddr en0` | `192.168.1.42` |
+| 3 | `ipconfig getifaddr en1` | `192.168.110.6` |
+| 4 | fallback | `127.0.0.1` |
+
+### One-command HTTPS + TURN (recommended)
+
+```bash
+./frontend/scripts/dev-clean-start-https.sh
+```
+
+This calls `scripts/dev-env.sh` internally, so `.env` and `frontend/.env.local`
+are always up to date before docker or Next.js starts.
+
+### If TURN_EXTERNAL_IP is missing
+
+```
+$ docker compose --profile webrtc up -d turn
+════════════════════════════════════════════════════
+ERROR: TURN_EXTERNAL_IP is not set.
+
+  Auto-detect:  ./scripts/dev-env.sh
+  Manual:       export TURN_EXTERNAL_IP=<your-ip>
+  Docs:         docs/webrtc-connectivity.md
+════════════════════════════════════════════════════
+```
+
+## 10. Lint & Type Check
 
 ```bash
 cd frontend

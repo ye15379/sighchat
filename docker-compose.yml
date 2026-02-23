@@ -89,12 +89,12 @@ services:
     image: coturn/coturn:4.6
     container_name: signchat_turn
     restart: unless-stopped
+    entrypoint: ["turnserver"]
     ports:
       - "3478:3478/udp"
       - "3478:3478/tcp"
       - "49152-49252:49152-49252/udp"
     command:
-      - -n
       - --log-file=stdout
       - --listening-ip=0.0.0.0
       - --listening-port=3478
@@ -106,6 +106,8 @@ services:
       - --lt-cred-mech
       - --fingerprint
       - --no-cli
+      - --no-tls
+      - --no-dtls
       - --no-tlsv1
       - --no-tlsv1_1
 

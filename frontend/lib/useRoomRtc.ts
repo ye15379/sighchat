@@ -66,6 +66,11 @@ export function useRoomRtc({
   const [pcReadyVersion, setPcReadyVersion] = useState(0);
   const [drainTrigger, setDrainTrigger] = useState(0);
 
+  // Bumped every time ontrack delivers new tracks.  A useEffect watches
+  // this counter so binding runs AFTER React commits the DOM — fixing the
+  // Safari race where ontrack fires before the remote <video> ref is set.
+  const [remoteStreamVersion, setRemoteStreamVersion] = useState(0);
+
   const [debugLastError, setDebugLastError] = useState<string | null>(null);
   const [pcDebugState, setPcDebugState] = useState<{
     connectionState: RTCPeerConnectionState | "none";
@@ -372,6 +377,11 @@ export function useRoomRtc({
         }
       }
 
+      debugLog(
+        `[attach] target=big hasStream=true`,
+        `tracksCount=${wanted.length}`,
+        `readyState=${video.readyState}`,
+      );
       video.srcObject = new MediaStream(wanted);
       video.playsInline = true;
       try {
@@ -399,11 +409,16 @@ export function useRoomRtc({
         } catch {
           /* */
         }
-        // If ontrack already delivered tracks before this element mounted, bind now
+        const src = remoteStreamRef.current;
+        debugLog(
+          `[attach] target=big (ref-mount) hasStream=${!!src}`,
+          `tracksCount=${src?.getTracks().length ?? 0}`,
+          `readyState=${el.readyState}`,
+        );
         bindRemoteVideo("ref-mount");
       }
     },
-    [bindRemoteVideo],
+    [bindRemoteVideo, debugLog],
   );
 
   /** Stable ref callback for the local <video> element. */
@@ -417,16 +432,20 @@ export function useRoomRtc({
         } catch {
           /* */
         }
-        // If local stream already exists (e.g. remount), rebind
         const s = localStreamRef.current;
         if (s) {
+          debugLog(
+            `[attach] target=small hasStream=true`,
+            `tracksCount=${s.getTracks().length}`,
+            `readyState=${el.readyState}`,
+          );
           el.muted = true;
           el.srcObject = s;
           void ensureVideoPlaying(el, "local-ref-mount");
         }
       }
     },
-    [ensureVideoPlaying],
+    [ensureVideoPlaying, debugLog],
   );
 
   const ensureRecvTransceivers = useCallback(() => {
@@ -659,6 +678,7 @@ export function useRoomRtc({
         }
         debugLog("[bind] ontrack stream:", getStreamInfo(remoteStreamRef.current));
         bindRemoteVideo("ontrack");
+        setRemoteStreamVersion((v) => v + 1);
       };
 
       pc.onicecandidate = (event) => {
@@ -903,6 +923,33 @@ export function useRoomRtc({
     flushPendingIce,
     debugLog,
   ]);
+
+  // ── Stream ↔ video-element reactive sync ──────────────────────
+  // Safari may fire ontrack before the remote <video> ref is committed
+  // by React, so the imperative bindRemoteVideo("ontrack") finds
+  // remoteVideoRef.current === null and silently skips.  This effect
+  // runs AFTER React's commit phase (refs are set) whenever a new
+  // track arrives (remoteStreamVersion bumps), guaranteeing the bind.
+  useEffect(() => {
+    if (!enabled || !roomId) return;
+    bindRemoteVideo("stream-effect");
+    // Local video safety net (handles remount after autoStart)
+    const lv = localVideoRef.current;
+    const ls = localStreamRef.current;
+    if (lv && ls) {
+      const cur = lv.srcObject instanceof MediaStream ? lv.srcObject : null;
+      if (cur !== ls) {
+        debugLog(
+          `[attach] target=small hasStream=true`,
+          `tracksCount=${ls.getTracks().length}`,
+          `readyState=${lv.readyState}`,
+        );
+        lv.muted = true;
+        lv.srcObject = ls;
+        void ensureVideoPlaying(lv, "local-effect");
+      }
+    }
+  }, [remoteStreamVersion, enabled, roomId, bindRemoteVideo, debugLog, ensureVideoPlaying]);
 
   // DEV: periodic stats polling
   useEffect(() => {

@@ -3,14 +3,22 @@
 #
 # Usage:
 #   ./scripts/dev-env.sh            # run from repo root
-#   source scripts/dev-env.sh       # run + export DEV_IP into caller
+#   bash scripts/dev-env.sh         # explicit bash
+#   source scripts/dev-env.sh       # run + export DEV_IP into caller (bash or zsh)
 #
 # Safe to call repeatedly — overwrites files idempotently.
 
 set -euo pipefail
 
-# ── Locate repo root (works regardless of cwd) ──
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ── Locate repo root (works regardless of cwd, bash or zsh) ──
+# BASH_SOURCE is undefined when `source`d from zsh → nounset error.
+# ${BASH_SOURCE+x} is safe: the +x form never triggers set -u.
+if [ -n "${BASH_SOURCE+x}" ]; then
+  _THIS_SCRIPT="${BASH_SOURCE[0]}"
+else
+  _THIS_SCRIPT="$0"
+fi
+SCRIPT_DIR="$(cd "$(dirname "$_THIS_SCRIPT")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ── Detect DEV_IP ──

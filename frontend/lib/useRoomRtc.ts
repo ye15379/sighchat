@@ -56,6 +56,14 @@ export function useRoomRtc({
   const isCallerRef = useRef<boolean | null>(null);
   const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // ── Local media readiness gate ──
+  // Prevents callee from creating answer before local tracks are attached
+  // to transceivers (which would produce recvonly m-lines → caller gets
+  // no remote tracks, especially on Safari).
+  const localReadyRef = useRef(false);
+  const localReadyResolveRef = useRef<(() => void) | null>(null);
+  const localReadyPromiseRef = useRef<Promise<void> | null>(null);
+
   // ── Serialized drain machinery ──
   // processingRef: mutex — only one drain loop can run at a time.
   // pcReadyVersion: bumped after autoStart creates the PC, so the drain
@@ -109,6 +117,12 @@ export function useRoomRtc({
   });
 
   const resetSessionFlags = () => {
+    // Release any pending waitLocalReady so drain exits promptly on cleanup
+    localReadyRef.current = false;
+    localReadyResolveRef.current?.();
+    localReadyResolveRef.current = null;
+    localReadyPromiseRef.current = null;
+
     processingRef.current = false;
     peerClientIdRef.current = null;
     negotiatedRef.current = false;
@@ -150,6 +164,45 @@ export function useRoomRtc({
       console.log("[RTC]", ...args);
     },
     [isDev],
+  );
+
+  const markLocalReady = useCallback(
+    (reason: string) => {
+      if (localReadyRef.current) return;
+      localReadyRef.current = true;
+      debugLog("[localReady] ready:", reason);
+      localReadyResolveRef.current?.();
+      localReadyResolveRef.current = null;
+    },
+    [debugLog],
+  );
+
+  const waitLocalReady = useCallback(
+    async (timeoutMs = 12000) => {
+      if (localReadyRef.current) return;
+      debugLog("[localReady] waiting...");
+      if (!localReadyPromiseRef.current) {
+        localReadyPromiseRef.current = new Promise<void>((resolve) => {
+          localReadyResolveRef.current = resolve;
+        });
+      }
+      let timerId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          localReadyPromiseRef.current,
+          new Promise<never>((_, reject) => {
+            timerId = setTimeout(
+              () => reject(new Error("local media not ready (timeout)")),
+              timeoutMs,
+            );
+          }),
+        ]);
+        debugLog("[localReady] done waiting");
+      } finally {
+        if (timerId !== undefined) clearTimeout(timerId);
+      }
+    },
+    [debugLog],
   );
 
   const updatePcDebugState = useCallback(() => {
@@ -650,6 +703,9 @@ export function useRoomRtc({
         audio: audioTrack?.id.slice(0, 8) ?? "none",
         video: videoTrack?.id.slice(0, 8) ?? "none",
       });
+      markLocalReady(
+        `autoStart-attached (audio=${audioTrack ? "yes" : "missing"}, video=${videoTrack ? "yes" : "missing"})`,
+      );
 
       pc.ontrack = (event) => {
         debugLog("ontrack", {
@@ -762,6 +818,7 @@ export function useRoomRtc({
     buildIceServers,
     ensureVideoPlaying,
     bindRemoteVideo,
+    markLocalReady,
   ]);
 
   // Main effect: start/stop RTC based on enabled + roomId
@@ -852,15 +909,35 @@ export function useRoomRtc({
                 debugLog("[drain] Ignoring offer — local offer already sent (glare)");
                 continue;
               }
+              debugLog(
+                "[drain] offer received, localReady=",
+                localReadyRef.current,
+                "isCaller=",
+                isCallerRef.current,
+              );
+              try {
+                await waitLocalReady();
+              } catch (gateErr) {
+                const msg = gateErr instanceof Error ? gateErr.message : String(gateErr);
+                debugLog("[drain] waitLocalReady failed:", msg);
+                setError("Local media not ready before answering offer");
+                setState("error");
+                break;
+              }
+              const readyPc = pcRef.current;
+              if (!readyPc) {
+                debugLog("[drain] PC gone after waitLocalReady, stopping");
+                break;
+              }
               debugLog("[drain] setRemoteDescription(offer)");
-              await pc.setRemoteDescription(new RTCSessionDescription(sig.sdp));
+              await readyPc.setRemoteDescription(new RTCSessionDescription(sig.sdp));
               await flushPendingIce();
-              const answer = await pc.createAnswer();
-              await pc.setLocalDescription(answer);
+              const answer = await readyPc.createAnswer();
+              await readyPc.setLocalDescription(answer);
               debugLog("[drain] sending answer");
               sendSignalRef.current({
                 kind: "answer",
-                sdp: pc.localDescription ?? answer,
+                sdp: readyPc.localDescription ?? answer,
                 clientId: clientIdRef.current,
               });
               negotiatedRef.current = true;
@@ -922,6 +999,7 @@ export function useRoomRtc({
     cleanup,
     flushPendingIce,
     debugLog,
+    waitLocalReady,
   ]);
 
   // ── Stream ↔ video-element reactive sync ──────────────────────

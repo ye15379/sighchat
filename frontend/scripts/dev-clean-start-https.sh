@@ -15,9 +15,19 @@ if [ "$cur_fd" -lt 10240 ]; then
   echo "[https] ulimit -n: $cur_fd → $(ulimit -n)"
 fi
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# BASH_SOURCE is undefined when `source`d from zsh; ${+x} is nounset-safe.
+if [ -n "${BASH_SOURCE+x}" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+fi
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT_DIR"
 echo "[https] frontend dir: $ROOT_DIR"
+
+# ── 0b. Auto-generate .env + frontend/.env.local ──
+source "$REPO_ROOT/scripts/dev-env.sh"
 
 # ── 1. Kill stale port listeners ──
 kill_port() {

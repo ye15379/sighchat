@@ -74,42 +74,56 @@ services:
       "
 
   # ── TURN server (coturn) ────────────────────────────────
-  # Provides relay candidates for WebRTC when direct P2P / STUN fails
-  # (e.g. symmetric NAT, cellular ↔ Wi-Fi cross-network).
+  # Optional — only needed when testing WebRTC across NATs.
+  # Start with: docker compose --profile webrtc up -d turn
   #
-  # REQUIRED env vars (set before `docker compose up`):
-  #   TURN_EXTERNAL_IP  — the IP that BOTH peers can reach.
-  #     • LAN-only dev:   your Wi-Fi IP (e.g. 192.168.1.42)
-  #     • Cloud / public:  the public IP (e.g. 203.0.113.10)
-  #     • Behind NAT:      "PUBLIC_IP/PRIVATE_IP" (e.g. "203.0.113.10/10.0.0.5")
-  #     • Tailscale:       your Tailscale IP (e.g. 100.64.x.x)
-  #
-  # Credentials must match NEXT_PUBLIC_ICE_SERVERS in frontend/.env.local.
+  # REQUIRED env var: TURN_EXTERNAL_IP (checked at container start).
+  #   Generate automatically: ./scripts/dev-env.sh
+  #   Or export manually:     export TURN_EXTERNAL_IP=192.168.1.42
+  #   See docs/webrtc-connectivity.md for details.
   turn:
     image: coturn/coturn:4.6
     container_name: signchat_turn
     restart: unless-stopped
-    entrypoint: ["turnserver"]
+    profiles: ["webrtc"]
     ports:
       - "3478:3478/udp"
       - "3478:3478/tcp"
       - "49152-49252:49152-49252/udp"
+    environment:
+      TURN_EXTERNAL_IP: "${TURN_EXTERNAL_IP:-}"
+      TURN_REALM: "${TURN_REALM:-signchat.local}"
+      TURN_USER: "${TURN_USER:-signchat}"
+      TURN_PASS: "${TURN_PASS:-signchat}"
+    entrypoint: ["sh", "-c"]
     command:
-      - --log-file=stdout
-      - --listening-ip=0.0.0.0
-      - --listening-port=3478
-      - --min-port=49152
-      - --max-port=49252
-      - --realm=${TURN_REALM:-signchat.local}
-      - --user=${TURN_USER:-signchat}:${TURN_PASS:-signchat}
-      - --external-ip=${TURN_EXTERNAL_IP:?Set TURN_EXTERNAL_IP before starting (see docs/webrtc-connectivity.md)}
-      - --lt-cred-mech
-      - --fingerprint
-      - --no-cli
-      - --no-tls
-      - --no-dtls
-      - --no-tlsv1
-      - --no-tlsv1_1
+      - |
+        if [ -z "$$TURN_EXTERNAL_IP" ]; then
+          echo "════════════════════════════════════════════════════"
+          echo "ERROR: TURN_EXTERNAL_IP is not set."
+          echo ""
+          echo "  Auto-detect:  ./scripts/dev-env.sh"
+          echo "  Manual:       export TURN_EXTERNAL_IP=<your-ip>"
+          echo "  Docs:         docs/webrtc-connectivity.md"
+          echo "════════════════════════════════════════════════════"
+          exit 1
+        fi
+        exec turnserver \
+          --log-file=stdout \
+          --listening-ip=0.0.0.0 \
+          --listening-port=3478 \
+          --min-port=49152 \
+          --max-port=49252 \
+          --realm="$$TURN_REALM" \
+          --user="$$TURN_USER:$$TURN_PASS" \
+          --external-ip="$$TURN_EXTERNAL_IP" \
+          --lt-cred-mech \
+          --fingerprint \
+          --no-cli \
+          --no-tls \
+          --no-dtls \
+          --no-tlsv1 \
+          --no-tlsv1_1
 
 volumes:
   pgdata:
